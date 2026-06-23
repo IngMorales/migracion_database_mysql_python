@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Migrador de Base de Datos MySQL</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f4f6f9; }
+        .card { border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        .console-box { background-color: #1e1e1e; color: #39ff14; font-family: 'Courier New', Courier, monospace; max-height: 250px; overflow-y: auto; padding: 15px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container py-5">
+        <h2 class="text-center mb-4">Migrador y Sincronizador Estructural MySQL</h2>
+        
+        <div class="row g-4">
+            <!-- Formulario Base de Datos Origen -->
+            <div class="col-md-6">
+                <div class="card p-4">
+                    <h5 class="card-title text-primary">Base de Datos Origen (Desarrollo / Nuevos Cambios)</h5>
+                    <hr>
+                    <div class="mb-3">
+                        <label class="form-label">Host</label>
+                        <input type="text" id="orig_host" class="form-control" value="localhost">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Usuario</label>
+                        <input type="text" id="orig_user" class="form-control" value="root">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Contraseña</label>
+                        <input type="password" id="orig_pass" class="form-control">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Nombre Base de Datos</label>
+                        <input type="text" id="orig_db" class="form-control">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Formulario Base de Datos Destino -->
+            <div class="col-md-6">
+                <div class="card p-4">
+                    <h5 class="card-title text-success">Base de Datos Destino (Actual / Producción a Sincronizar)</h5>
+                    <hr>
+                    <div class="mb-3">
+                        <label class="form-label">Host</label>
+                        <input type="text" id="dest_host" class="form-control" value="localhost">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Usuario</label>
+                        <input type="text" id="dest_user" class="form-control" value="root">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Contraseña</label>
+                        <input type="password" id="dest_pass" class="form-control">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Nombre Base de Datos</label>
+                        <input type="text" id="dest_db" class="form-control">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mt-4">
+            <div class="col-12 text-center">
+                <button class="btn btn-primary btn-lg px-5 me-2" onclick="analizarBasesDeDatos()">1. Analizar Cambios</button>
+                <button class="btn btn-warning btn-lg px-5 me-2" id="btn-backup" onclick="descargarBackup()" disabled>2. Descargar Backup de Destino</button>
+                <button class="btn btn-danger btn-lg px-5" id="btn-migrar" onclick="ejecutarMigracion()" disabled>3. Aplicar Sincronización</button>
+            </div>
+        </div>
+
+        <!-- Resultados del Análisis -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card p-4">
+                    <h5 class="card-title">Resultado de Comparación (Cálculo previo)</h5>
+                    <div id="resumen-analisis" class="text-muted my-2">No se ha realizado ningún análisis.</div>
+                    
+                    <div class="row">
+                        <div class="col-md-4">
+                            <h6>Tablas Nuevas a Crear:</h6>
+                            <ul id="lista-tablas" class="list-group list-group-flush small"></ul>
+                        </div>
+                        <div class="col-md-4">
+                            <h6>Columnas Nuevas a Añadir:</h6>
+                            <ul id="lista-columnas" class="list-group list-group-flush small"></ul>
+                        </div>
+                        <div class="col-md-4">
+                            <h6>Triggers Nuevos/Modificados:</h6>
+                            <ul id="lista-triggers" class="list-group list-group-flush small"></ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Consola de Progreso en Tiempo Real -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card p-4">
+                    <h5 class="card-title">Progreso del Proceso</h5>
+                    <div id="consola" class="console-box">
+                        Esperando inicio de operación...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let datos_conexion = {};
+
+        function obtenerDatosFormulario() {
+            return {
+                origen: {
+                    host: document.getElementById('orig_host').value,
+                    user: document.getElementById('orig_user').value,
+                    password: document.getElementById('orig_pass').value,
+                    database: document.getElementById('orig_db').value
+                },
+                destino: {
+                    host: document.getElementById('dest_host').value,
+                    user: document.getElementById('dest_user').value,
+                    password: document.getElementById('dest_pass').value,
+                    database: document.getElementById('dest_db').value
+                }
+            };
+        }
+
+        function escribirConsola(texto, limpiar = false) {
+            const consola = document.getElementById('consola');
+            if (limpiar) consola.innerHTML = '';
+            consola.innerHTML += `<div>> ${texto}</div>`;
+            consola.scrollTop = consola.scrollHeight;
+        }
+
+        async function analizarBasesDeDatos() {
+            datos_conexion = obtenerDatosFormulario();
+            escribirConsola("Iniciando análisis comparativo de esquemas...", true);
+            
+            try {
+                const response = await fetch('/analizar', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(datos_conexion)
+                });
+                
+                const res = await response.json();
+                if (res.status === 'success') {
+                    const diffs = res.diferencias;
+                    
+                    // Renderizar Tablas
+                    const listTablas = document.getElementById('lista-tablas');
+                    listTablas.innerHTML = '';
+                    diffs.tablas_nuevas.forEach(t => {
+                        listTablas.innerHTML += `<li class="list-group-item text-success">+ ${t}</li>`;
+                    });
+                    if (diffs.tablas_nuevas.length === 0) listTablas.innerHTML = '<li>Sin cambios</li>';
+
+                    // Renderizar Columnas
+                    const listColumnas = document.getElementById('lista-columnas');
+                    listColumnas.innerHTML = '';
+                    diffs.columnas_nuevas.forEach(c => {
+                        listColumnas.innerHTML += `<li class="list-group-item text-warning">+ ${c.tabla} -> ${c.columna} (${c.definicion.Type})</li>`;
+                    });
+                    if (diffs.columnas_nuevas.length === 0) listColumnas.innerHTML = '<li>Sin cambios</li>';
+
+                    // Renderizar Triggers
+                    const listTriggers = document.getElementById('lista-triggers');
+                    listTriggers.innerHTML = '';
+                    diffs.triggers_nuevos_o_modificados.forEach(tr => {
+                        listTriggers.innerHTML += `<li class="list-group-item text-info">[${tr.accion}] ${tr.nombre}</li>`;
+                    });
+                    if (diffs.triggers_nuevos_o_modificados.length === 0) listTriggers.innerHTML = '<li>Sin cambios</li>';
+
+                    document.getElementById('resumen-analisis').innerHTML = `<strong>Diferencias encontradas:</strong> ${diffs.tablas_nuevas.length} tablas nuevas, ${diffs.columnas_nuevas.length} columnas nuevas, ${diffs.triggers_nuevos_o_modificados.length} triggers modificados/nuevos.`;
+                    
+                    escribirConsola("Análisis completado correctamente.");
+                    document.getElementById('btn-backup').removeAttribute('disabled');
+                } else {
+                    escribirConsola(`Error: ${res.message}`);
+                }
+            } catch (error) {
+                escribirConsola(`Error de comunicación: ${error.message}`);
+            }
+        }
+
+        async function descargarBackup() {
+            escribirConsola("Generando archivo de respaldo de la base de datos destino...");
+            try {
+                const response = await fetch('/respaldar', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(datos_conexion)
+                });
+
+                if (response.status === 200) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `backup_${datos_conexion.destino.database}.sql`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    escribirConsola("Respaldo descargado exitosamente. Se ha habilitado la opción de migración.");
+                    document.getElementById('btn-migrar').removeAttribute('disabled');
+                } else {
+                    const errorJson = await response.json();
+                    escribirConsola(`Error en el respaldo: ${errorJson.message}`);
+                }
+            } catch (error) {
+                escribirConsola(`Error en la solicitud: ${error.message}`);
+            }
+        }
+
+        async function ejecutarMigracion() {
+            if (!confirm("¿Está seguro de aplicar los cambios estructurales? Los datos actuales del destino se conservarán, pero la estructura será alterada.")) {
+                return;
+            }
+            escribirConsola("Iniciando proceso de migración de estructuras...");
+            try {
+                const response = await fetch('/migrar', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(datos_conexion)
+                });
+
+                const res = await response.json();
+                if (res.status === 'success') {
+                    res.pasos.forEach(paso => {
+                        escribirConsola(paso);
+                    });
+                    escribirConsola("Proceso de sincronización finalizado exitosamente.");
+                } else {
+                    escribirConsola(`Error crítico durante la migración: ${res.message}`);
+                }
+            } catch (error) {
+                escribirConsola(`Error en el envío de datos: ${error.message}`);
+            }
+        }
+    </script>
+</body>
+</html>
