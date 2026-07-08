@@ -3,24 +3,66 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Migrador de Base de Datos MySQL</title>
+    <title>Migrador y Sincronizador MySQL</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { background-color: #f4f6f9; }
-        .card { border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-        .console-box { background-color: #1e1e1e; color: #39ff14; font-family: 'Courier New', Courier, monospace; max-height: 250px; overflow-y: auto; padding: 15px; border-radius: 5px; }
+        body { background-color: #f0f2f7; }
+        .encabezado {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: #fff; border-radius: 12px; padding: 28px 32px; margin-bottom: 28px;
+        }
+        .encabezado p { margin: 0; opacity: .85; }
+        .card { border: none; border-radius: 10px; box-shadow: 0 4px 10px rgba(30,60,114,.08); }
+        .card-origen  { border-top: 4px solid #0d6efd; }
+        .card-destino { border-top: 4px solid #198754; }
+        .paso-numero {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 30px; height: 30px; border-radius: 50%; color: #fff;
+            font-weight: 700; margin-right: 10px; font-size: .9rem;
+        }
+        .flecha-flujo {
+            display: flex; align-items: center; justify-content: center;
+            font-size: 2.2rem; color: #2a5298;
+        }
+        .console-box {
+            background-color: #10141c; font-family: 'Cascadia Code', 'Courier New', monospace;
+            font-size: .85rem; max-height: 280px; overflow-y: auto;
+            padding: 15px; border-radius: 8px;
+        }
+        .console-box .hora { color: #6c757d; margin-right: 8px; }
+        .log-info  { color: #8fd3ff; }
+        .log-ok    { color: #39ff88; }
+        .log-warn  { color: #ffd76e; }
+        .log-error { color: #ff6b6b; }
+        #tabla-datos tbody tr.fila-sin-cambios { opacity: .55; }
+        .badge-estado { min-width: 82px; }
+
+        /* --- Modal de proceso (SweetAlert2) --- */
+        #swal-paso {
+            min-height: 1.4em;
+            font-family: 'Cascadia Code', 'Courier New', monospace;
+        }
+        .swal2-popup .progress { background-color: #e9ecef; }
     </style>
 </head>
 <body>
-    <div class="container py-5">
-        <h2 class="text-center mb-4">Migrador y Sincronizador Estructural MySQL</h2>
-        
-        <div class="row g-4">
-            <!-- Formulario Base de Datos Origen -->
-            <div class="col-md-6">
-                <div class="card p-4">
-                    <h5 class="card-title text-primary">Base de Datos Origen (Desarrollo / Nuevos Cambios)</h5>
-                    <hr>
+    <div class="container py-4">
+
+        <div class="encabezado">
+            <h2 class="mb-1">Migrador y Sincronizador MySQL</h2>
+            <p>Flujo de trabajo: conectar <strong>Origen</strong> y <strong>Destino</strong> &rarr; analizar &rarr; respaldar &rarr; sincronizar estructura &rarr; migrar datos (omitiendo ids ya existentes).</p>
+        </div>
+
+        <!-- ================= PASO 1: CONEXIONES ================= -->
+        <div class="row g-4 align-items-stretch">
+            <!-- Base de Datos ORIGEN -->
+            <div class="col-md-5">
+                <div class="card card-origen p-4 h-100">
+                    <h5 class="card-title text-primary">
+                        <span class="paso-numero bg-primary">1</span>Base de Datos ORIGEN
+                    </h5>
+                    <p class="text-muted small mb-2">Fuente de los datos: <strong>desde aquí se leen</strong> las tablas, estructuras y registros a migrar.</p>
+                    <hr class="mt-0">
                     <div class="mb-3">
                         <label class="form-label">Host</label>
                         <input type="text" id="orig_host" class="form-control" value="localhost">
@@ -33,18 +75,23 @@
                         <label class="form-label">Contraseña</label>
                         <input type="password" id="orig_pass" class="form-control">
                     </div>
-                    <div class="mb-3">
+                    <div class="mb-1">
                         <label class="form-label">Nombre Base de Datos</label>
-                        <input type="text" id="orig_db" class="form-control">
+                        <input type="text" id="orig_db" class="form-control" placeholder="bd_origen">
                     </div>
                 </div>
             </div>
 
-            <!-- Formulario Base de Datos Destino -->
-            <div class="col-md-6">
-                <div class="card p-4">
-                    <h5 class="card-title text-success">Base de Datos Destino (Actual / Producción a Sincronizar)</h5>
-                    <hr>
+            <div class="col-md-2 flecha-flujo d-none d-md-flex">&#10142;</div>
+
+            <!-- Base de Datos DESTINO -->
+            <div class="col-md-5">
+                <div class="card card-destino p-4 h-100">
+                    <h5 class="card-title text-success">
+                        <span class="paso-numero bg-success">2</span>Base de Datos DESTINO
+                    </h5>
+                    <p class="text-muted small mb-2">Base de datos a afectar: <strong>aquí se escriben</strong> las estructuras nuevas y los registros con id inexistente.</p>
+                    <hr class="mt-0">
                     <div class="mb-3">
                         <label class="form-label">Host</label>
                         <input type="text" id="dest_host" class="form-control" value="localhost">
@@ -57,29 +104,38 @@
                         <label class="form-label">Contraseña</label>
                         <input type="password" id="dest_pass" class="form-control">
                     </div>
-                    <div class="mb-3">
+                    <div class="mb-1">
                         <label class="form-label">Nombre Base de Datos</label>
-                        <input type="text" id="dest_db" class="form-control">
+                        <input type="text" id="dest_db" class="form-control" placeholder="bd_destino">
                     </div>
                 </div>
             </div>
         </div>
 
+        <!-- ================= BARRA DE ACCIONES ================= -->
         <div class="row mt-4">
             <div class="col-12 text-center">
-                <button class="btn btn-primary btn-lg px-5 me-2" onclick="analizarBasesDeDatos()">1. Analizar Cambios</button>
-                <button class="btn btn-warning btn-lg px-5 me-2" id="btn-backup" onclick="descargarBackup()" disabled>2. Descargar Backup de Destino</button>
-                <button class="btn btn-danger btn-lg px-5" id="btn-migrar" onclick="ejecutarMigracion()" disabled>3. Aplicar Sincronización</button>
+                <button class="btn btn-primary btn-lg px-4 me-2 mb-2" id="btn-analizar" onclick="analizarBasesDeDatos()">
+                    &#128269; 1. Analizar
+                </button>
+                <button class="btn btn-warning btn-lg px-4 me-2 mb-2" id="btn-backup" onclick="descargarBackup()" disabled>
+                    &#128190; 2. Backup del Destino
+                </button>
+                <button class="btn btn-danger btn-lg px-4 me-2 mb-2" id="btn-migrar" onclick="ejecutarMigracion()" disabled>
+                    &#128296; 3. Sincronizar Estructura
+                </button>
+                <button class="btn btn-success btn-lg px-4 mb-2" id="btn-datos" onclick="migrarDatosSeleccionados()" disabled>
+                    &#128229; 4. Migrar Datos Seleccionados
+                </button>
             </div>
         </div>
 
-        <!-- Resultados del Análisis -->
+        <!-- ================= RESULTADO DEL ANÁLISIS ESTRUCTURAL ================= -->
         <div class="row mt-4">
             <div class="col-12">
                 <div class="card p-4">
-                    <h5 class="card-title">Resultado de Comparación (Cálculo previo)</h5>
+                    <h5 class="card-title">Análisis Estructural <small class="text-muted">(qué le falta al destino)</small></h5>
                     <div id="resumen-analisis" class="text-muted my-2">No se ha realizado ningún análisis.</div>
-                    
                     <div class="row">
                         <div class="col-md-4">
                             <h6>Tablas Nuevas a Crear:</h6>
@@ -98,99 +154,363 @@
             </div>
         </div>
 
-        <!-- Consola de Progreso en Tiempo Real -->
+        <!-- ================= SELECCIÓN DE TABLAS PARA MIGRAR DATOS ================= -->
         <div class="row mt-4">
             <div class="col-12">
                 <div class="card p-4">
-                    <h5 class="card-title">Progreso del Proceso</h5>
+                    <h5 class="card-title">Migración de Datos por Tabla</h5>
+                    <p class="text-muted small mb-2">
+                        Marque las tablas cuyos datos desea llevar al destino. Los registros cuyo
+                        <strong>id (clave primaria) ya exista se omiten automáticamente</strong>;
+                        solo se insertan los registros nuevos.
+                    </p>
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0" id="tabla-datos">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width:40px"><input type="checkbox" class="form-check-input" id="chk-todas" onclick="alternarTodas(this)" title="Seleccionar todas"></th>
+                                    <th>Tabla</th>
+                                    <th>Estado</th>
+                                    <th class="text-end">Filas Origen</th>
+                                    <th class="text-end">Filas Destino</th>
+                                    <th class="text-end">Nuevas a Insertar</th>
+                                    <th>Clave Primaria</th>
+                                    <th>Resultado</th>
+                                </tr>
+                            </thead>
+                            <tbody id="cuerpo-tabla-datos">
+                                <tr><td colspan="8" class="text-muted text-center py-3">Ejecute el análisis para listar las tablas del origen.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= CONSOLA ================= -->
+        <div class="row mt-4 mb-5">
+            <div class="col-12">
+                <div class="card p-4">
+                    <h5 class="card-title">Consola de Operaciones</h5>
                     <div id="consola" class="console-box">
-                        Esperando inicio de operación...
+                        <div class="log-info">Esperando inicio de operación...</div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script>
         let datos_conexion = {};
+        let backupDescargado = false;
+        let analisisRealizado = false;
 
+        // ------------------------------------------------------------------
+        // Utilidades generales
+        // ------------------------------------------------------------------
         function obtenerDatosFormulario() {
             return {
                 origen: {
-                    host: document.getElementById('orig_host').value,
-                    user: document.getElementById('orig_user').value,
+                    host: document.getElementById('orig_host').value.trim(),
+                    user: document.getElementById('orig_user').value.trim(),
                     password: document.getElementById('orig_pass').value,
-                    database: document.getElementById('orig_db').value
+                    database: document.getElementById('orig_db').value.trim()
                 },
                 destino: {
-                    host: document.getElementById('dest_host').value,
-                    user: document.getElementById('dest_user').value,
+                    host: document.getElementById('dest_host').value.trim(),
+                    user: document.getElementById('dest_user').value.trim(),
                     password: document.getElementById('dest_pass').value,
-                    database: document.getElementById('dest_db').value
+                    database: document.getElementById('dest_db').value.trim()
                 }
             };
         }
 
-        function escribirConsola(texto, limpiar = false) {
+        function escribirConsola(texto, tipo = 'info', limpiar = false) {
             const consola = document.getElementById('consola');
             if (limpiar) consola.innerHTML = '';
-            consola.innerHTML += `<div>> ${texto}</div>`;
+            const hora = new Date().toLocaleTimeString();
+            consola.innerHTML += `<div class="log-${tipo}"><span class="hora">[${hora}]</span>&gt; ${texto}</div>`;
             consola.scrollTop = consola.scrollHeight;
         }
 
-        async function analizarBasesDeDatos() {
-            datos_conexion = obtenerDatosFormulario();
-            escribirConsola("Iniciando análisis comparativo de esquemas...", true);
-            
-            try {
-                const response = await fetch('/analizar', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(datos_conexion)
-                });
-                
-                const res = await response.json();
-                if (res.status === 'success') {
-                    const diffs = res.diferencias;
-                    
-                    // Renderizar Tablas
-                    const listTablas = document.getElementById('lista-tablas');
-                    listTablas.innerHTML = '';
-                    diffs.tablas_nuevas.forEach(t => {
-                        listTablas.innerHTML += `<li class="list-group-item text-success">+ ${t}</li>`;
-                    });
-                    if (diffs.tablas_nuevas.length === 0) listTablas.innerHTML = '<li>Sin cambios</li>';
+        function validarFormulario() {
+            const d = obtenerDatosFormulario();
+            if (!d.origen.database || !d.destino.database) {
+                Swal.fire({ icon: 'warning', title: 'Datos incompletos', text: 'Debe indicar el nombre de ambas bases de datos (origen y destino).' });
+                return null;
+            }
+            if (d.origen.host === d.destino.host && d.origen.database === d.destino.database) {
+                Swal.fire({ icon: 'warning', title: 'Configuración inválida', text: 'Origen y destino no pueden ser la misma base de datos.' });
+                return null;
+            }
+            return d;
+        }
 
-                    // Renderizar Columnas
-                    const listColumnas = document.getElementById('lista-columnas');
-                    listColumnas.innerHTML = '';
-                    diffs.columnas_nuevas.forEach(c => {
-                        listColumnas.innerHTML += `<li class="list-group-item text-warning">+ ${c.tabla} -> ${c.columna} (${c.definicion.Type})</li>`;
-                    });
-                    if (diffs.columnas_nuevas.length === 0) listColumnas.innerHTML = '<li>Sin cambios</li>';
+        function bloquearBotones(bloquear) {
+            ['btn-analizar', 'btn-backup', 'btn-migrar', 'btn-datos'].forEach(id => {
+                document.getElementById(id).disabled = bloquear;
+            });
+        }
 
-                    // Renderizar Triggers
-                    const listTriggers = document.getElementById('lista-triggers');
-                    listTriggers.innerHTML = '';
-                    diffs.triggers_nuevos_o_modificados.forEach(tr => {
-                        listTriggers.innerHTML += `<li class="list-group-item text-info">[${tr.accion}] ${tr.nombre}</li>`;
-                    });
-                    if (diffs.triggers_nuevos_o_modificados.length === 0) listTriggers.innerHTML = '<li>Sin cambios</li>';
+        function restaurarEstadoBotones() {
+            document.getElementById('btn-analizar').disabled = false;
+            document.getElementById('btn-backup').disabled = !analisisRealizado;
+            document.getElementById('btn-migrar').disabled = !analisisRealizado;
+            document.getElementById('btn-datos').disabled = !analisisRealizado;
+        }
 
-                    document.getElementById('resumen-analisis').innerHTML = `<strong>Diferencias encontradas:</strong> ${diffs.tablas_nuevas.length} tablas nuevas, ${diffs.columnas_nuevas.length} columnas nuevas, ${diffs.triggers_nuevos_o_modificados.length} triggers modificados/nuevos.`;
-                    
-                    escribirConsola("Análisis completado correctamente.");
-                    document.getElementById('btn-backup').removeAttribute('disabled');
-                } else {
-                    escribirConsola(`Error: ${res.message}`);
-                }
-            } catch (error) {
-                escribirConsola(`Error de comunicación: ${error.message}`);
+        async function advertenciaSinBackup() {
+            if (backupDescargado) return true;
+            const r = await Swal.fire({
+                icon: 'warning', title: 'Sin respaldo previo',
+                text: 'Aún no ha descargado un backup del destino. ¿Desea continuar de todas formas?',
+                showCancelButton: true, confirmButtonText: 'Continuar sin respaldo', cancelButtonText: 'Cancelar',
+                confirmButtonColor: '#ffc107'
+            });
+            return r.isConfirmed;
+        }
+
+        // ------------------------------------------------------------------
+        // Modal de proceso en tiempo real (SweetAlert2 + barra de avance)
+        // ------------------------------------------------------------------
+        function abrirModalProceso(titulo) {
+            Swal.fire({
+                title: titulo,
+                html: `
+                    <div id="swal-paso" class="text-muted small mb-3">Iniciando proceso...</div>
+                    <div class="progress" style="height:10px;">
+                        <div id="swal-barra" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" style="width:100%"></div>
+                    </div>
+                `,
+                allowOutsideClick: false,
+                allowEscapeKey: false,
+                showConfirmButton: false,
+                didOpen: () => Swal.showLoading()
+            });
+        }
+
+        function actualizarPasoModal(mensaje, porcentaje = null) {
+            const paso = document.getElementById('swal-paso');
+            if (paso) paso.textContent = mensaje;
+            const barra = document.getElementById('swal-barra');
+            if (barra && porcentaje !== null) {
+                barra.style.width = `${Math.min(Math.max(porcentaje, 0), 100)}%`;
+                barra.classList.remove('progress-bar-striped', 'progress-bar-animated');
             }
         }
 
+        // Lee una respuesta en streaming NDJSON (una línea JSON por evento)
+        // y va invocando onEvento(objeto) a medida que llegan, sin esperar
+        // a que la operación completa termine: esto es lo que produce la
+        // sensación de "tiempo real" en el modal.
+        async function procesarStream(url, body, onEvento) {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+
+            if (!response.ok) {
+                let mensaje = `Error HTTP ${response.status}`;
+                let detalle = null;
+                try {
+                    const j = await response.json();
+                    mensaje = j.message || mensaje;
+                    detalle = j.detalle || null;
+                } catch (e) { /* respuesta sin JSON */ }
+                throw errorConDetalle(mensaje, detalle);
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lineas = buffer.split('\n');
+                buffer = lineas.pop();
+                for (const linea of lineas) {
+                    if (linea.trim()) onEvento(JSON.parse(linea));
+                }
+            }
+            if (buffer.trim()) onEvento(JSON.parse(buffer));
+        }
+
+        // ------------------------------------------------------------------
+        // Manejo de errores detallados: el backend adjunta en `detalle` la
+        // traza completa (traceback) del error tal cual ocurrió en Python.
+        // ------------------------------------------------------------------
+        function errorConDetalle(mensaje, detalle) {
+            const err = new Error(mensaje);
+            err.detalle = detalle || null;
+            return err;
+        }
+
+        function escaparHtml(texto) {
+            const div = document.createElement('div');
+            div.textContent = texto;
+            return div.innerHTML;
+        }
+
+        function mostrarErrorDetallado(titulo, error) {
+            if (error.detalle) escribirConsola(error.detalle, 'error');
+            Swal.fire({
+                icon: 'error',
+                title: titulo,
+                width: error.detalle ? '52em' : undefined,
+                html: `<p class="mb-2">${escaparHtml(error.message)}</p>` +
+                      (error.detalle
+                        ? `<pre style="text-align:left; max-height:300px; overflow:auto; font-size:.75rem;
+                                       background:#1e1e1e; color:#ff8a8a; padding:10px; border-radius:6px;
+                                       white-space:pre-wrap;">${escaparHtml(error.detalle)}</pre>`
+                        : '')
+            });
+        }
+
+        // ------------------------------------------------------------------
+        // Paso 1: Análisis (estructura + datos)
+        // ------------------------------------------------------------------
+        async function analizarBasesDeDatos(silencioso = false) {
+            const datos = validarFormulario();
+            if (!datos) return;
+            datos_conexion = datos;
+
+            if (!silencioso) escribirConsola('Iniciando análisis comparativo de esquemas y datos...', 'info', true);
+            bloquearBotones(true);
+            abrirModalProceso(silencioso ? 'Actualizando estado' : 'Analizando bases de datos');
+
+            let resultadoFinal = null;
+            let errorMsg = null;
+            let errorDetalle = null;
+
+            try {
+                await procesarStream('/analizar', datos_conexion, (evt) => {
+                    if (evt.tipo === 'progreso') {
+                        actualizarPasoModal(evt.mensaje);
+                        escribirConsola(evt.mensaje, 'info');
+                    } else if (evt.tipo === 'resultado') {
+                        resultadoFinal = evt;
+                    } else if (evt.tipo === 'error') {
+                        errorMsg = evt.mensaje;
+                        errorDetalle = evt.detalle || null;
+                    }
+                });
+
+                if (errorMsg) throw errorConDetalle(errorMsg, errorDetalle);
+
+                Swal.close();
+                renderizarEstructura(resultadoFinal.diferencias, resultadoFinal.resumen);
+                renderizarTablasDatos(resultadoFinal.datos);
+                analisisRealizado = true;
+                escribirConsola(
+                    `Análisis completado: ${resultadoFinal.resumen.tablas_analizadas} tablas analizadas, ` +
+                    `${resultadoFinal.resumen.filas_pendientes} filas pendientes de migrar al destino.`, 'ok'
+                );
+
+                if (!silencioso) {
+                    Swal.fire({
+                        icon: 'success', title: 'Análisis completado',
+                        html: `<strong>${resultadoFinal.resumen.tablas_analizadas}</strong> tablas analizadas<br>` +
+                              `<strong>${resultadoFinal.resumen.filas_pendientes}</strong> filas pendientes de migrar`,
+                        timer: 2200, showConfirmButton: false
+                    });
+                }
+            } catch (error) {
+                Swal.close();
+                escribirConsola(`Error en el análisis: ${error.message}`, 'error');
+                mostrarErrorDetallado('Error en el análisis', error);
+            } finally {
+                restaurarEstadoBotones();
+            }
+        }
+
+        function renderizarEstructura(diffs, resumen) {
+            const listTablas = document.getElementById('lista-tablas');
+            listTablas.innerHTML = diffs.tablas_nuevas.length
+                ? diffs.tablas_nuevas.map(t => `<li class="list-group-item text-success">+ ${t}</li>`).join('')
+                : '<li class="list-group-item text-muted">Sin cambios</li>';
+
+            const listColumnas = document.getElementById('lista-columnas');
+            listColumnas.innerHTML = diffs.columnas_nuevas.length
+                ? diffs.columnas_nuevas.map(c =>
+                    `<li class="list-group-item text-warning">+ ${c.tabla} &rarr; ${c.columna} (${c.definicion.Type})</li>`).join('')
+                : '<li class="list-group-item text-muted">Sin cambios</li>';
+
+            const listTriggers = document.getElementById('lista-triggers');
+            listTriggers.innerHTML = diffs.triggers_nuevos_o_modificados.length
+                ? diffs.triggers_nuevos_o_modificados.map(tr =>
+                    `<li class="list-group-item text-info">[${tr.accion}] ${tr.nombre}</li>`).join('')
+                : '<li class="list-group-item text-muted">Sin cambios</li>';
+
+            document.getElementById('resumen-analisis').innerHTML =
+                `<strong>Diferencias estructurales:</strong> ${resumen.tablas_nuevas} tablas nuevas, ` +
+                `${resumen.columnas_nuevas} columnas nuevas, ${resumen.triggers} triggers nuevos/modificados.`;
+        }
+
+        function renderizarTablasDatos(tablas) {
+            const cuerpo = document.getElementById('cuerpo-tabla-datos');
+            if (!tablas.length) {
+                cuerpo.innerHTML = '<tr><td colspan="8" class="text-muted text-center py-3">El origen no contiene tablas.</td></tr>';
+                return;
+            }
+
+            cuerpo.innerHTML = tablas.map(t => {
+                let badge, nuevasTxt, sinCambios = false, marcada = false;
+
+                if (t.estado === 'nueva') {
+                    badge = '<span class="badge bg-primary badge-estado">Nueva</span>';
+                    nuevasTxt = `<strong class="text-primary">${t.filas_nuevas}</strong>`;
+                    marcada = t.filas_nuevas > 0;
+                } else if (t.estado === 'sin_pk') {
+                    badge = '<span class="badge bg-secondary badge-estado" title="Sin clave primaria: no es posible detectar duplicados">Sin PK</span>';
+                    nuevasTxt = '<span class="text-muted" title="No se puede calcular sin clave primaria">N/D</span>';
+                } else {
+                    badge = '<span class="badge bg-success badge-estado">Existente</span>';
+                    if (t.filas_nuevas > 0) {
+                        nuevasTxt = `<strong class="text-danger">${t.filas_nuevas}</strong>`;
+                        marcada = true;
+                    } else {
+                        nuevasTxt = '<span class="text-muted">0</span>';
+                        sinCambios = true;
+                    }
+                }
+
+                const deshabilitada = t.estado === 'sin_pk' ? 'disabled title="Sin clave primaria no se pueden omitir duplicados"' : '';
+                return `
+                    <tr class="${sinCambios ? 'fila-sin-cambios' : ''}" id="fila-${t.tabla}">
+                        <td><input type="checkbox" class="form-check-input chk-tabla" value="${t.tabla}" ${marcada ? 'checked' : ''} ${deshabilitada}></td>
+                        <td><code>${t.tabla}</code></td>
+                        <td>${badge}</td>
+                        <td class="text-end">${t.filas_origen}</td>
+                        <td class="text-end">${t.filas_destino ?? '—'}</td>
+                        <td class="text-end">${nuevasTxt}</td>
+                        <td><small>${t.clave_primaria.length ? t.clave_primaria.join(', ') : '<span class="text-muted">ninguna</span>'}</small></td>
+                        <td class="celda-resultado"><small class="text-muted">—</small></td>
+                    </tr>`;
+            }).join('');
+            document.getElementById('chk-todas').checked = false;
+        }
+
+        function alternarTodas(master) {
+            document.querySelectorAll('.chk-tabla:not(:disabled)').forEach(chk => chk.checked = master.checked);
+        }
+
+        // ------------------------------------------------------------------
+        // Paso 2: Backup del destino
+        // ------------------------------------------------------------------
         async function descargarBackup() {
-            escribirConsola("Generando archivo de respaldo de la base de datos destino...");
+            escribirConsola('Generando archivo de respaldo de la base de datos destino...', 'info');
+            bloquearBotones(true);
+            Swal.fire({
+                title: 'Generando respaldo',
+                html: `<div class="text-muted small">Exportando estructura y datos de <strong>${datos_conexion.destino.database}</strong>...</div>`,
+                allowOutsideClick: false, allowEscapeKey: false, showConfirmButton: false,
+                didOpen: () => Swal.showLoading()
+            });
+
             try {
                 const response = await fetch('/respaldar', {
                     method: 'POST',
@@ -207,40 +527,168 @@
                     document.body.appendChild(a);
                     a.click();
                     a.remove();
-                    escribirConsola("Respaldo descargado exitosamente. Se ha habilitado la opción de migración.");
-                    document.getElementById('btn-migrar').removeAttribute('disabled');
+                    backupDescargado = true;
+                    Swal.close();
+                    escribirConsola('Respaldo descargado exitosamente.', 'ok');
+                    Swal.fire({ icon: 'success', title: 'Respaldo generado', text: 'La descarga comenzó correctamente.', timer: 2000, showConfirmButton: false });
                 } else {
                     const errorJson = await response.json();
-                    escribirConsola(`Error en el respaldo: ${errorJson.message}`);
+                    throw errorConDetalle(errorJson.message || `Error HTTP ${response.status}`, errorJson.detalle);
                 }
             } catch (error) {
-                escribirConsola(`Error en la solicitud: ${error.message}`);
+                Swal.close();
+                escribirConsola(`Error en el respaldo: ${error.message}`, 'error');
+                mostrarErrorDetallado('Error al generar el respaldo', error);
+            } finally {
+                restaurarEstadoBotones();
             }
         }
 
+        // ------------------------------------------------------------------
+        // Paso 3: Sincronización estructural (streaming paso a paso)
+        // ------------------------------------------------------------------
         async function ejecutarMigracion() {
-            if (!confirm("¿Está seguro de aplicar los cambios estructurales? Los datos actuales del destino se conservarán, pero la estructura será alterada.")) {
-                return;
-            }
-            escribirConsola("Iniciando proceso de migración de estructuras...");
+            if (!(await advertenciaSinBackup())) return;
+            const confirmacion = await Swal.fire({
+                icon: 'warning', title: '¿Sincronizar estructura?',
+                html: 'Se aplicarán al <strong>destino</strong> las tablas, columnas y triggers nuevos detectados.<br>Los datos actuales se conservan; solo se altera la estructura.',
+                showCancelButton: true, confirmButtonText: 'Sí, sincronizar', cancelButtonText: 'Cancelar',
+                confirmButtonColor: '#dc3545'
+            });
+            if (!confirmacion.isConfirmed) return;
+
+            escribirConsola('Iniciando sincronización de estructuras...', 'info');
+            bloquearBotones(true);
+            abrirModalProceso('Sincronizando estructura');
+
+            let resultadoFinal = null;
+            let errorMsg = null;
+            let errorDetalle = null;
+
             try {
-                const response = await fetch('/migrar', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(datos_conexion)
+                await procesarStream('/migrar', datos_conexion, (evt) => {
+                    if (evt.tipo === 'progreso') {
+                        actualizarPasoModal(evt.mensaje);
+                    } else if (evt.tipo === 'paso') {
+                        escribirConsola(evt.mensaje, 'ok');
+                    } else if (evt.tipo === 'resultado') {
+                        resultadoFinal = evt;
+                    } else if (evt.tipo === 'error') {
+                        errorMsg = evt.mensaje;
+                        errorDetalle = evt.detalle || null;
+                    }
                 });
 
-                const res = await response.json();
-                if (res.status === 'success') {
-                    res.pasos.forEach(paso => {
-                        escribirConsola(paso);
-                    });
-                    escribirConsola("Proceso de sincronización finalizado exitosamente.");
+                if (errorMsg) throw errorConDetalle(errorMsg, errorDetalle);
+
+                Swal.close();
+                if (resultadoFinal.pasos.length === 0) {
+                    escribirConsola('El destino ya está sincronizado: no había cambios estructurales pendientes.', 'warn');
+                    Swal.fire({ icon: 'info', title: 'Sin cambios pendientes', text: 'El destino ya estaba sincronizado estructuralmente.' });
                 } else {
-                    escribirConsola(`Error crítico durante la migración: ${res.message}`);
+                    escribirConsola('Sincronización estructural finalizada exitosamente.', 'ok');
+                    Swal.fire({
+                        icon: 'success', title: 'Estructura sincronizada',
+                        html: `Se aplicaron <strong>${resultadoFinal.pasos.length}</strong> cambios estructurales.`,
+                        timer: 2500, showConfirmButton: false
+                    });
                 }
+                await analizarBasesDeDatos(true); // refrescar el estado
             } catch (error) {
-                escribirConsola(`Error en el envío de datos: ${error.message}`);
+                Swal.close();
+                escribirConsola(`Error crítico durante la migración: ${error.message}`, 'error');
+                mostrarErrorDetallado('Error en la sincronización', error);
+            } finally {
+                restaurarEstadoBotones();
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Paso 4: Migración de datos de las tablas seleccionadas (streaming
+        // con barra de progreso real, tabla por tabla).
+        // ------------------------------------------------------------------
+        async function migrarDatosSeleccionados() {
+            const seleccionadas = Array.from(document.querySelectorAll('.chk-tabla:checked')).map(c => c.value);
+            if (seleccionadas.length === 0) {
+                Swal.fire({ icon: 'warning', title: 'Ninguna tabla seleccionada', text: 'Seleccione al menos una tabla para migrar sus datos.' });
+                return;
+            }
+            if (!(await advertenciaSinBackup())) return;
+
+            const confirmacion = await Swal.fire({
+                icon: 'question', title: `¿Migrar datos de ${seleccionadas.length} tabla(s)?`,
+                html: `${seleccionadas.map(t => `<code>${t}</code>`).join(', ')}<br><br>` +
+                      'Los registros con id ya existente en destino se <strong>omiten</strong>; solo se insertan los nuevos.',
+                showCancelButton: true, confirmButtonText: 'Sí, migrar datos', cancelButtonText: 'Cancelar',
+                confirmButtonColor: '#198754'
+            });
+            if (!confirmacion.isConfirmed) return;
+
+            escribirConsola(`Iniciando migración de datos de ${seleccionadas.length} tabla(s)...`, 'info');
+            bloquearBotones(true);
+            abrirModalProceso('Migrando datos');
+
+            let total = seleccionadas.length;
+            let procesadas = 0;
+            let resultadoFinal = null;
+            let errorMsg = null;
+            let errorDetalle = null;
+
+            try {
+                await procesarStream('/migrar-datos', { ...datos_conexion, tablas: seleccionadas }, (evt) => {
+                    if (evt.tipo === 'inicio') {
+                        total = evt.total;
+                    } else if (evt.tipo === 'progreso') {
+                        actualizarPasoModal(evt.mensaje, Math.round((procesadas / total) * 100));
+                    } else if (evt.tipo === 'tabla_resultado') {
+                        procesadas++;
+                        actualizarPasoModal(`Procesada: ${evt.tabla}`, Math.round((procesadas / total) * 100));
+                        const celda = document.querySelector(`#fila-${evt.tabla} .celda-resultado`);
+                        if (evt.estado === 'ok') {
+                            escribirConsola(`[${evt.tabla}] ${evt.detalle}`, 'ok');
+                            if (celda) celda.innerHTML = `<small class="text-success">&#10003; ${evt.insertadas} insertadas / ${evt.omitidas} omitidas</small>`;
+                        } else {
+                            escribirConsola(`[${evt.tabla}] ERROR: ${evt.detalle}`, 'error');
+                            if (celda) celda.innerHTML = `<small class="text-danger">&#10007; Error</small>`;
+                        }
+                    } else if (evt.tipo === 'resultado') {
+                        resultadoFinal = evt;
+                    } else if (evt.tipo === 'error') {
+                        errorMsg = evt.mensaje;
+                        errorDetalle = evt.detalle || null;
+                    }
+                });
+
+                if (errorMsg) throw errorConDetalle(errorMsg, errorDetalle);
+
+                Swal.close();
+                const s = resultadoFinal.resumen;
+                escribirConsola(
+                    `Migración de datos finalizada: ${s.tablas_procesadas} tablas procesadas, ` +
+                    `${s.insertadas} filas insertadas, ${s.omitidas} omitidas por id duplicado` +
+                    (s.errores.length ? `, errores en: ${s.errores.join(', ')}.` : '.'),
+                    s.errores.length ? 'warn' : 'ok'
+                );
+
+                if (s.errores.length) {
+                    Swal.fire({
+                        icon: 'warning', title: 'Migración finalizada con errores',
+                        html: `${s.insertadas} filas insertadas.<br>Errores en: <strong>${s.errores.join(', ')}</strong>`
+                    });
+                } else {
+                    Swal.fire({
+                        icon: 'success', title: 'Datos migrados',
+                        html: `<strong>${s.insertadas}</strong> filas insertadas<br><strong>${s.omitidas}</strong> omitidas por id ya existente`,
+                        timer: 3000, showConfirmButton: false
+                    });
+                }
+                await analizarBasesDeDatos(true); // refrescar conteos
+            } catch (error) {
+                Swal.close();
+                escribirConsola(`Error durante la migración de datos: ${error.message}`, 'error');
+                mostrarErrorDetallado('Error en la migración de datos', error);
+            } finally {
+                restaurarEstadoBotones();
             }
         }
     </script>
