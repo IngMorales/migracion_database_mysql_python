@@ -63,9 +63,15 @@
                     </h5>
                     <p class="text-muted small mb-2">Fuente de los datos: <strong>desde aquí se leen</strong> las tablas, estructuras y registros a migrar.</p>
                     <hr class="mt-0">
-                    <div class="mb-3">
-                        <label class="form-label">Host</label>
-                        <input type="text" id="orig_host" class="form-control" value="localhost">
+                    <div class="row g-2 mb-3">
+                        <div class="col-8">
+                            <label class="form-label">Host</label>
+                            <input type="text" id="orig_host" class="form-control" value="localhost">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label">Puerto</label>
+                            <input type="number" id="orig_port" class="form-control" value="3306" min="1" max="65535">
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Usuario</label>
@@ -92,9 +98,15 @@
                     </h5>
                     <p class="text-muted small mb-2">Base de datos a afectar: <strong>aquí se escriben</strong> las estructuras nuevas y los registros con id inexistente.</p>
                     <hr class="mt-0">
-                    <div class="mb-3">
-                        <label class="form-label">Host</label>
-                        <input type="text" id="dest_host" class="form-control" value="localhost">
+                    <div class="row g-2 mb-3">
+                        <div class="col-8">
+                            <label class="form-label">Host</label>
+                            <input type="text" id="dest_host" class="form-control" value="localhost">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label">Puerto</label>
+                            <input type="number" id="dest_port" class="form-control" value="3306" min="1" max="65535">
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Usuario</label>
@@ -213,12 +225,14 @@
             return {
                 origen: {
                     host: document.getElementById('orig_host').value.trim(),
+                    port: Number(document.getElementById('orig_port').value),
                     user: document.getElementById('orig_user').value.trim(),
                     password: document.getElementById('orig_pass').value,
                     database: document.getElementById('orig_db').value.trim()
                 },
                 destino: {
                     host: document.getElementById('dest_host').value.trim(),
+                    port: Number(document.getElementById('dest_port').value),
                     user: document.getElementById('dest_user').value.trim(),
                     password: document.getElementById('dest_pass').value,
                     database: document.getElementById('dest_db').value.trim()
@@ -240,7 +254,15 @@
                 Swal.fire({ icon: 'warning', title: 'Datos incompletos', text: 'Debe indicar el nombre de ambas bases de datos (origen y destino).' });
                 return null;
             }
-            if (d.origen.host === d.destino.host && d.origen.database === d.destino.database) {
+            if (!d.origen.host || !d.destino.host || !d.origen.user || !d.destino.user) {
+                Swal.fire({ icon: 'warning', title: 'Datos incompletos', text: 'Debe indicar host y usuario para ambas conexiones.' });
+                return null;
+            }
+            if (![d.origen.port, d.destino.port].every(p => Number.isInteger(p) && p >= 1 && p <= 65535)) {
+                Swal.fire({ icon: 'warning', title: 'Puerto inválido', text: 'Los puertos deben ser números entre 1 y 65535.' });
+                return null;
+            }
+            if (d.origen.host === d.destino.host && d.origen.port === d.destino.port && d.origen.database === d.destino.database) {
                 Swal.fire({ icon: 'warning', title: 'Configuración inválida', text: 'Origen y destino no pueden ser la misma base de datos.' });
                 return null;
             }
@@ -340,8 +362,8 @@
         }
 
         // ------------------------------------------------------------------
-        // Manejo de errores detallados: el backend adjunta en `detalle` la
-        // traza completa (traceback) del error tal cual ocurrió en Python.
+        // Manejo de errores: el backend envía mensajes útiles sin exponer
+        // rutas locales, credenciales ni trazas internas de Python.
         // ------------------------------------------------------------------
         function errorConDetalle(mensaje, detalle) {
             const err = new Error(mensaje);
@@ -356,17 +378,10 @@
         }
 
         function mostrarErrorDetallado(titulo, error) {
-            if (error.detalle) escribirConsola(error.detalle, 'error');
             Swal.fire({
                 icon: 'error',
                 title: titulo,
-                width: error.detalle ? '52em' : undefined,
-                html: `<p class="mb-2">${escaparHtml(error.message)}</p>` +
-                      (error.detalle
-                        ? `<pre style="text-align:left; max-height:300px; overflow:auto; font-size:.75rem;
-                                       background:#1e1e1e; color:#ff8a8a; padding:10px; border-radius:6px;
-                                       white-space:pre-wrap;">${escaparHtml(error.detalle)}</pre>`
-                        : '')
+                html: `<p class="mb-0">${escaparHtml(error.message)}</p>`
             });
         }
 

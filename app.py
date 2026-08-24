@@ -26,7 +26,6 @@ Progreso en tiempo real:
 import io
 import json
 import re
-import traceback
 import pymysql
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 
@@ -36,17 +35,21 @@ app = Flask(__name__)
 TAMANO_LOTE = 500
 
 
+class ErrorConexionMySQL(Exception):
+    """Error de conexión listo para mostrarse al usuario, sin traza interna."""
+
+
 def evento(tipo, **kwargs):
     """Serializa una línea de evento NDJSON para las rutas en streaming."""
     return json.dumps({'tipo': tipo, **kwargs}, default=str) + "\n"
 
 
 def detalle_error(e):
-    """Devuelve el error tal cual: tipo de excepción, mensaje y traza completa."""
+    """Registra el detalle técnico y devuelve solamente un mensaje seguro."""
+    app.logger.exception("Error durante una operación del migrador")
     return {
         'tipo_error': type(e).__name__,
         'mensaje_error': str(e),
-        'traza': traceback.format_exc()
     }
 
 
@@ -54,7 +57,7 @@ def detalle_error(e):
 # Conexión y utilidades de introspección
 # ---------------------------------------------------------------------------
 
-def obtener_conexion(config):
+def obtener_conexion(config, nombre='base de datos'):
     """
     Abre una conexión MySQL a partir del diccionario de configuración.
 
@@ -62,8 +65,18 @@ def obtener_conexion(config):
     no soporta SSL (frecuente en hosting compartido, p. ej. MariaDB de cPanel),
     reintenta sin cifrado para no bloquear la operación.
     """
+    try:
+        puerto = int(config.get('port', 3306))
+        if not 1 <= puerto <= 65535:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise ErrorConexionMySQL(
+            f"El puerto de {nombre} debe ser un número entre 1 y 65535."
+        ) from None
+
     parametros = dict(
         host=config['host'],
+        port=puerto,
         user=config['user'],
         password=config['password'],
         database=config['database'],
@@ -76,8 +89,28 @@ def obtener_conexion(config):
     except pymysql.err.OperationalError as e:
         # 2026 = "SSL is required but the server doesn't support it"
         if e.args and e.args[0] == 2026:
-            return pymysql.connect(**parametros)
-        raise
+            try:
+                return pymysql.connect(**parametros)
+            except pymysql.err.OperationalError as segundo_error:
+                e = segundo_error
+
+        codigo = e.args[0] if e.args else None
+        servidor = f"{config['host']}:{puerto}"
+        if codigo in (2002, 2003, 2005):
+            mensaje = (
+                f"No fue posible conectar con {nombre} en {servidor}. "
+                "Verifique el host y el puerto, que MySQL esté activo y que el "
+                "firewall o el acceso remoto de MySQL permita esta computadora."
+            )
+        elif codigo == 1045:
+            mensaje = f"El usuario o la contraseña de {nombre} no son correctos."
+        elif codigo == 1049:
+            mensaje = (
+                f"La base de datos '{config['database']}' no existe en {nombre}."
+            )
+        else:
+            mensaje = f"MySQL rechazó la conexión con {nombre} (código {codigo})."
+        raise ErrorConexionMySQL(mensaje) from None
 
 
 def listar_tablas(cursor, database):
@@ -159,9 +192,9 @@ def contar_filas(cursor, tabla):
     return cursor.fetchone()['total']
 
 
-def obtener_estructura_db(config):
+def obtener_estructura_db(config, nombre='base de datos'):
     """Obtiene el esquema completo (tablas + columnas + triggers) de una BD."""
-    conn = obtener_conexion(config)
+    conn = obtener_conexion(config, nombre)
     estructuras = {'tablas': {}, 'triggers': {}}
     try:
         with conn.cursor() as cursor:
@@ -192,10 +225,10 @@ def obtener_estructura_db(config):
 def comparar_estructuras_stream(origen_cfg, destino_cfg):
     """Compara ambos esquemas y reporta avance por etapa."""
     yield ('progreso', 'Leyendo estructura de la base de datos ORIGEN...')
-    origen = obtener_estructura_db(origen_cfg)
+    origen = obtener_estructura_db(origen_cfg, 'la base de datos ORIGEN')
 
     yield ('progreso', 'Leyendo estructura de la base de datos DESTINO...')
-    destino = obtener_estructura_db(destino_cfg)
+    destino = obtener_estructura_db(destino_cfg, 'la base de datos DESTINO')
 
     yield ('progreso', 'Comparando tablas y columnas...')
     comparativa = {
@@ -244,8 +277,8 @@ def analizar_datos_stream(origen_cfg, destino_cfg):
       - clave primaria detectada
       - cuántas filas del origen aún NO existen en destino (candidatas a migrar)
     """
-    conn_origen = obtener_conexion(origen_cfg)
-    conn_destino = obtener_conexion(destino_cfg)
+    conn_origen = obtener_conexion(origen_cfg, 'la base de datos ORIGEN')
+    conn_destino = obtener_conexion(destino_cfg, 'la base de datos DESTINO')
     detalle = []
     try:
         with conn_origen.cursor() as cur_orig, conn_destino.cursor() as cur_dest:
@@ -334,9 +367,7 @@ def analizar():
             yield evento('resultado', diferencias=diferencias, datos=datos, resumen=resumen)
         except Exception as e:
             det = detalle_error(e)
-            yield evento('error',
-                         mensaje=f"{det['tipo_error']}: {det['mensaje_error']}",
-                         detalle=det['traza'])
+            yield evento('error', mensaje=det['mensaje_error'])
 
     return Response(stream_with_context(generador()), mimetype='application/x-ndjson')
 
@@ -348,7 +379,7 @@ def respaldar():
         data = request.json
         destino_cfg = data['destino']
 
-        conn = obtener_conexion(destino_cfg)
+        conn = obtener_conexion(destino_cfg, 'la base de datos DESTINO')
         sql_backup = io.StringIO()
         sql_backup.write(f"-- Respaldo automático de la base de datos: {destino_cfg['database']}\n")
         sql_backup.write("SET FOREIGN_KEY_CHECKS=0;\n\n")
@@ -417,8 +448,7 @@ def respaldar():
         det = detalle_error(e)
         return jsonify({
             'status': 'error',
-            'message': f"Error al generar backup: {det['tipo_error']}: {det['mensaje_error']}",
-            'detalle': det['traza']
+            'message': f"Error al generar backup: {det['mensaje_error']}"
         }), 500
 
 
@@ -442,8 +472,8 @@ def migrar():
                 else:
                     diffs = payload
 
-            conn_origen = obtener_conexion(origen_cfg)
-            conn_destino = obtener_conexion(destino_cfg)
+            conn_origen = obtener_conexion(origen_cfg, 'la base de datos ORIGEN')
+            conn_destino = obtener_conexion(destino_cfg, 'la base de datos DESTINO')
             pasos_ejecutados = []
 
             try:
@@ -498,9 +528,7 @@ def migrar():
             yield evento('resultado', pasos=pasos_ejecutados)
         except Exception as e:
             det = detalle_error(e)
-            yield evento('error',
-                         mensaje=f"Error durante la migración: {det['tipo_error']}: {det['mensaje_error']}",
-                         detalle=det['traza'])
+            yield evento('error', mensaje=f"Error durante la migración: {det['mensaje_error']}")
 
     return Response(stream_with_context(generador()), mimetype='application/x-ndjson')
 
@@ -532,8 +560,8 @@ def migrar_datos():
             return
 
         try:
-            conn_origen = obtener_conexion(origen_cfg)
-            conn_destino = obtener_conexion(destino_cfg)
+            conn_origen = obtener_conexion(origen_cfg, 'la base de datos ORIGEN')
+            conn_destino = obtener_conexion(destino_cfg, 'la base de datos DESTINO')
             reporte = []
             total = len(tablas_solicitadas)
             yield evento('inicio', total=total)
@@ -626,9 +654,7 @@ def migrar_datos():
             })
         except Exception as e:
             det = detalle_error(e)
-            yield evento('error',
-                         mensaje=f"Error durante la migración de datos: {det['tipo_error']}: {det['mensaje_error']}",
-                         detalle=det['traza'])
+            yield evento('error', mensaje=f"Error durante la migración de datos: {det['mensaje_error']}")
 
     return Response(stream_with_context(generador()), mimetype='application/x-ndjson')
 
