@@ -96,14 +96,32 @@ def obtener_conexion(config, nombre='base de datos'):
 
         codigo = e.args[0] if e.args else None
         servidor = f"{config['host']}:{puerto}"
-        if codigo in (2002, 2003, 2005):
+        # MySQL informa la IP con la que nos ve: "...'usuario'@'IP'..." (1045)
+        # o "Host 'IP' is not allowed to connect..." (1130).
+        texto = str(e.args[1]) if len(e.args) > 1 else ''
+        ip = re.search(r"@'([^']+)'|Host '([^']+)'", texto)
+        ip = (ip.group(1) or ip.group(2)) if ip else None
+        aviso_ip = (
+            f" Si el usuario y la contraseña son correctos, agregue la IP {ip} "
+            "en cPanel → Remote MySQL (Acceso remoto a MySQL)."
+        ) if ip else ''
+        if codigo == 1130:
+            mensaje = (
+                f"El servidor de {nombre} no permite conexiones desde la IP "
+                f"{ip or 'de esta computadora'}. Agréguela en cPanel → Remote MySQL "
+                "(Acceso remoto a MySQL)."
+            )
+        elif codigo in (2002, 2003, 2005):
             mensaje = (
                 f"No fue posible conectar con {nombre} en {servidor}. "
                 "Verifique el host y el puerto, que MySQL esté activo y que el "
                 "firewall o el acceso remoto de MySQL permita esta computadora."
             )
         elif codigo == 1045:
-            mensaje = f"El usuario o la contraseña de {nombre} no son correctos."
+            mensaje = (
+                f"El usuario o la contraseña de {nombre} no son correctos."
+                + aviso_ip
+            )
         elif codigo == 1049:
             mensaje = (
                 f"La base de datos '{config['database']}' no existe en {nombre}."
@@ -329,6 +347,34 @@ def analizar_datos_stream(origen_cfg, destino_cfg):
 @app.route('/')
 def index():
     return render_template('index.html')
+
+
+@app.route('/probar-conexion', methods=['POST'])
+def probar_conexion():
+    """Comprueba una sola conexión (origen o destino) y devuelve el detalle."""
+    data = request.json or {}
+    lado = data.get('lado', 'origen')
+    nombre = 'la base de datos ORIGEN' if lado == 'origen' else 'la base de datos DESTINO'
+    try:
+        conexion = obtener_conexion(data.get('config', {}), nombre)
+    except ErrorConexionMySQL as e:
+        return jsonify({'status': 'error', 'message': str(e)})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': f'Error inesperado: {e}'})
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT VERSION() AS v, CURRENT_USER() AS u, DATABASE() AS d")
+            info = cursor.fetchone()
+            tablas, vistas = listar_tablas_y_vistas(cursor, info['d'])
+    finally:
+        conexion.close()
+    return jsonify({
+        'status': 'ok',
+        'message': (
+            f"Conexión exitosa a '{info['d']}' como {info['u']} "
+            f"(MySQL/MariaDB {info['v']}): {len(tablas)} tablas, {len(vistas)} vistas."
+        )
+    })
 
 
 @app.route('/analizar', methods=['POST'])
